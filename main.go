@@ -21,6 +21,9 @@ import (
 const Version = "1.4.0"
 const CREDENTIALS = "GOOGLE_APPLICATION_CREDENTIALS"
 
+// var() helps define multiple variables at once.
+// flag defines command line arguments; flag.String("schema", "public", "postgres schema")
+// defines a command line argument/option schema, with "public" as a default value and "postgres schema" as a help message.
 var (
 	pgConn      = flag.String("uri", "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable", "postgres connection uri")
 	pgSchema    = flag.String("schema", "public", "postgres schema")
@@ -35,12 +38,15 @@ var (
 	ignoreTypes = flag.Bool("ignore-unknown-types", false, "Ignore unknown column types")
 )
 
+//struct is a typed collection of fields
 type Column struct {
 	Name       string
 	Type       string
 	IsNullable string
 }
 
+// Given a PG column schema, outputs corresponding BQ schema.
+// *Column is a pointer to a Column object, like in C++.
 func (c *Column) ToFieldSchema() (*bigquery.FieldSchema, error) {
 	var f bigquery.FieldSchema
 	f.Name = c.Name
@@ -70,11 +76,13 @@ func (c *Column) ToFieldSchema() (*bigquery.FieldSchema, error) {
 	return &f, nil
 }
 
+// For a given schema and table name, gets PG schema, returns equivalent BQ schema
 func schemaFromPostgres(db *sql.DB, schema, table string) bigquery.Schema {
 	rows, err := db.Query(`SELECT column_name, udt_name, is_nullable FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2 ORDER BY ordinal_position`, schema, table)
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Defers the execution until surrounding code (rest of the function in this case) has run
 	defer rows.Close()
 	excludes := strings.Split(*exclude, ",")
 	var c Column
@@ -107,9 +115,12 @@ func contains(s string, haystack []string) bool {
 	return false
 }
 
+// Given a BigQuerySchema, returns a comma-separated string of column names
 func columnsFromSchema(schema bigquery.Schema) string {
+	// Typed array/list declaration
 	cols := make([]string, len(schema))
 	for i, field := range schema {
+	    // pq.QuoteIdentifier quotes the input parameter, thereby making it case-sensitive in the ultimate SQL query
 		cols[i] = pq.QuoteIdentifier(field.Name)
         if field.Type == bigquery.StringFieldType {
             cols[i] = cols[i] + "::text"
@@ -123,7 +134,10 @@ func getRowsStream(db *sql.DB, schema bigquery.Schema, pgSchema, table string) i
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Creates a synchronous in-memory pipe in form of io.Reader and io.Writer pair.
+	// Everything written to the PipeWriter can be read from the PipeReader.
 	reader, writer := io.Pipe()
+	// Below is an anonymous function, invoked as a goroutine, allowing it to execute asynchronously
 	go func() {
 		defer rows.Close()
 		defer writer.Close()
@@ -140,6 +154,7 @@ func getRowsStream(db *sql.DB, schema bigquery.Schema, pgSchema, table string) i
 	return reader
 }
 
+// init() is automatically called once, before main()
 func init() {
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -159,7 +174,9 @@ func main() {
 	if keyfile == "" {
 		log.Fatal("!! missing ", CREDENTIALS)
 	}
+	// option package contains options for setting a Google API client
 	opt := option.WithServiceAccountFile(keyfile)
+	// get an empty Context
 	ctx := context.Background()
 	client, err := bigquery.NewClient(ctx, *projectId, opt)
 	if err != nil {
@@ -172,14 +189,19 @@ func main() {
 	}
 	defer db.Close()
 
+    // Returns a bool
 	partitioned := *partitions > -1
 
 	schema := schemaFromPostgres(db, *pgSchema, *pgTable)
 	table := client.Dataset(*datasetId).Table(*pgTable)
 
+    // _ is a blank identifier, preventing a compilation error due to an unused variable.
+    // Metadata() gets BigQuery table metadata.
 	if _, err := table.Metadata(ctx); err != nil {
+	    // err = True implies BigQuery table does not exist, and this block creates one
 		metadata := &bigquery.TableMetadata{Schema: schema}
 		if partitioned {
+		    // Memory allocation as well as initialization
 			metadata.TimePartitioning = &bigquery.TimePartitioning{
 				Expiration: time.Duration(*partitions) * 24 * time.Hour,
 			}
@@ -193,6 +215,7 @@ func main() {
 			log.Fatal(err)
 		}
 	} else if *labelKey != "" && *labelValue != "" {
+	    // Update label(s) when BigQuery table exists and label(s) has been provided
 		var tm bigquery.TableMetadataToUpdate
 		tm.SetLabel(*labelKey, *labelValue)
 		_, err := table.Update(ctx, tm, "")
@@ -202,22 +225,26 @@ func main() {
 	}
 
 	if partitioned {
+	    // Append partition to BigQuery table name
 		table.TableID += time.Now().UTC().Format("$20060102")
 	}
 
 	log.Println("TableID", table.TableID)
 
 	f := getRowsStream(db, schema, *pgSchema, *pgTable)
+	// Create a ReaderSource–a source for a load operation that gets data from an io.Reader
 	rs := bigquery.NewReaderSource(f)
 	rs.SourceFormat = bigquery.JSON
 	rs.MaxBadRecords = 0
 	rs.Schema = schema
+	// Create a Loader that is used to load data into a BigQuery table
 	loader := table.LoaderFrom(rs)
 	loader.CreateDisposition = bigquery.CreateNever
 	loader.WriteDisposition = bigquery.WriteTruncate
 	if partitioned {
 		loader.SchemaUpdateOptions = []string{"ALLOW_FIELD_ADDITION", "ALLOW_FIELD_RELAXATION"}
 	}
+	// Initiates a copy job, returning a job pointer
 	job, err := loader.Run(ctx)
 	if err != nil {
 		log.Fatal(err)
