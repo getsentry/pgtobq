@@ -18,7 +18,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-const Version = "1.4.0"
+const Version = "1.6.0"
 const CREDENTIALS = "GOOGLE_APPLICATION_CREDENTIALS"
 
 var (
