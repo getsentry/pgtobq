@@ -18,7 +18,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-const Version = "1.4.0"
+const Version = "1.6.0"
 const CREDENTIALS = "GOOGLE_APPLICATION_CREDENTIALS"
 
 var (
@@ -155,13 +155,20 @@ func main() {
 		log.Fatal("!! a label key and a label value are both required if either is passed")
 	}
 
-	keyfile := os.Getenv(CREDENTIALS)
-	if keyfile == "" {
-		log.Fatal("!! missing ", CREDENTIALS)
-	}
-	opt := option.WithServiceAccountFile(keyfile)
 	ctx := context.Background()
-	client, err := bigquery.NewClient(ctx, *projectId, opt)
+	keyfile := os.Getenv(CREDENTIALS)
+
+	var client *bigquery.Client
+	var err error
+
+	if keyfile == "" {
+		log.Print("GOOGLE_APPLICATION_CREDENTIALS not found in the environment. Using default credentials.")
+		client, err = bigquery.NewClient(ctx, *projectId)
+	} else {
+		opt := option.WithServiceAccountFile(keyfile)
+		client, err = bigquery.NewClient(ctx, *projectId, opt)
+	}
+
 	if err != nil {
 		log.Fatal(err)
 	}
